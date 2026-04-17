@@ -515,3 +515,6 @@ def main() -> None:
                 csv = filtered_b.to_csv(index=False).encode("utf-8")
                 st.download_button("⬇️ Exportar CSV", data=csv, file_name="board_jira.csv", mime="text/csv")
 
+
+if __name__ == "__main__":
+    main()
