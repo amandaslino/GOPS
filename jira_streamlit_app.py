@@ -527,9 +527,7 @@ def main() -> None:
         if epic_df.empty:
             st.info("Nenhum épico encontrado nos projetos disponíveis.")
         else:
-            metrics_row_epic(epic_df)
-            st.markdown("---")
-            with st.expander("🔍 Filtros", expanded=True):
+            with st.expander("🔍 Filtros", expanded=False):
                 fc1, fc2, fc3 = st.columns(3)
                 with fc1:
                     espacos = sorted(epic_df["Espaço"].dropna().unique().tolist())
@@ -549,6 +547,8 @@ def main() -> None:
             if sel_status:
                 filtered = filtered[filtered["Status"].isin(sel_status)]
 
+            metrics_row_epic(filtered)
+            st.markdown("---")
             st.markdown(f"**{len(filtered)} épico(s)**")
             render_epic_table(filtered)
 
@@ -561,9 +561,7 @@ def main() -> None:
         if board_df.empty:
             st.info("Nenhum item encontrado. Verifique os `board_ids` nos secrets.")
         else:
-            metrics_row_board(board_df)
-            st.markdown("---")
-            with st.expander("🔍 Filtros", expanded=True):
+            with st.expander("🔍 Filtros", expanded=False):
                 fc1, fc2, fc3 = st.columns(3)
                 with fc1:
                     resps_b = sorted(board_df["Responsável"].dropna().unique().tolist())
@@ -583,6 +581,8 @@ def main() -> None:
             if sel_board:
                 filtered_b = filtered_b[filtered_b["Board"].isin(sel_board)]
 
+            metrics_row_board(filtered_b)
+            st.markdown("---")
             st.markdown(f"**{len(filtered_b)} item(s)**")
             render_board_table(filtered_b)
 
