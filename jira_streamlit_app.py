@@ -470,10 +470,52 @@ def render_board_table(df: pd.DataFrame) -> None:
     )
 
 
+
+# ─────────────────────────────────────────────
+# Autenticação
+# ─────────────────────────────────────────────
+def check_password() -> bool:
+    if st.session_state.get("authenticated"):
+        return True
+
+    st.markdown("""
+    <style>
+    [data-testid="stAppViewContainer"] { background: #f8fafc; }
+    .login-box {
+        max-width: 380px;
+        margin: 80px auto 0 auto;
+        background: white;
+        border-radius: 16px;
+        padding: 40px;
+        box-shadow: 0 4px 24px rgba(0,0,0,0.08);
+    }
+    </style>
+    """, unsafe_allow_html=True)
+
+    st.markdown('<div class="login-box">', unsafe_allow_html=True)
+    st.markdown("## 📋 Jira Dashboard")
+    st.markdown("Digite a senha para acessar.")
+    password = st.text_input("Senha", type="password", placeholder="••••••••", key="login_input")
+    btn = st.button("Entrar", type="primary", use_container_width=True)
+    st.markdown('</div>', unsafe_allow_html=True)
+
+    if btn:
+        expected = st.secrets.get("app_password", "")
+        if password == expected:
+            st.session_state["authenticated"] = True
+            st.rerun()
+        else:
+            st.error("Senha incorreta.")
+
+    return False
+
 # ─────────────────────────────────────────────
 # App principal
 # ─────────────────────────────────────────────
 def main() -> None:
+    if not check_password():
+        return
+
     st.set_page_config(
         page_title="Jira Dashboard",
         page_icon="📋",
