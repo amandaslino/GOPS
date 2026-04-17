@@ -92,16 +92,6 @@ def extract_due_date(fields: dict[str, Any], due_field_id: str | None) -> date |
 def split_csv(value: str) -> list[str]:
     return [item.strip() for item in value.split(",") if item.strip()]
 
-def unique_strings(values: Iterable[str | None]) -> list[str]:
-    seen: set[str] = set()
-    ordered: list[str] = []
-    for value in values:
-        if not value or value in seen:
-            continue
-        seen.add(value)
-        ordered.append(value)
-    return ordered
-
 # ─────────────────────────────────────────────
 # Config via Secrets
 # ─────────────────────────────────────────────
@@ -132,7 +122,9 @@ class Config:
             st.error(f"Secret ausente na configuração do Streamlit: {e}. Verifique o arquivo secrets.toml.")
             st.stop()
 
-
+# ─────────────────────────────────────────────
+# JiraClient
+# ─────────────────────────────────────────────
 class JiraClient:
     def __init__(self, config: Config) -> None:
         self.config = config
@@ -210,6 +202,11 @@ class JiraClient:
 
     def find_scope_projects(self) -> list[dict[str, Any]]:
         normalized_scopes = [normalize_text(item) for item in self.config.scope_names if item.strip()]
+
+        # Se scope_names vazio, retorna todos os projetos automaticamente
+        if not normalized_scopes:
+            return list(self.iter_projects())
+
         projects = []
         for project in self.iter_projects():
             haystacks = [
@@ -289,9 +286,6 @@ class JiraClient:
     def get_board_issues(self, board_id: str, fields: list[str]) -> list[dict[str, Any]]:
         return self.paged_get(f"/rest/agile/1.0/board/{board_id}/issue", {"fields": ",".join(fields)})
 
-    def get_board(self, board_id: str) -> dict[str, Any]:
-        return self.request("GET", f"/rest/agile/1.0/board/{board_id}")
-
 
 # ─────────────────────────────────────────────
 # Regras de negócio
@@ -342,104 +336,77 @@ def completion_from_status(fields: dict[str, Any]) -> int:
     return 0
 
 
+# ─────────────────────────────────────────────
+# Builders de DataFrame
+# ─────────────────────────────────────────────
 def build_epic_df(client: JiraClient, projects: list[dict[str, Any]]) -> pd.DataFrame:
     due_field_id = client.resolve_deadline_field()
-    epic_fields = unique_strings(["summary", "status", "assignee", due_field_id])
-    child_fields = unique_strings(["status", due_field_id])
-    rows: list[dict[str, Any]] = []
+    epic_fields = ["summary", "assignee", "status", "duedate"]
+    child_fields = ["status", "duedate"]
+    if due_field_id and due_field_id not in epic_fields:
+        epic_fields.append(due_field_id)
+        child_fields.append(due_field_id)
 
-    for project in projects:
-        project_key = (project.get("key") or "").strip()
-        if not project_key:
-            continue
-        project_name = (project.get("name") or project_key).strip()
-        epics = client.get_project_epics(project_key, epic_fields)
+    rows = []
+    total_projects = len(projects)
+    progress_bar = st.progress(0, text="Carregando épicos...")
 
-        for epic in epics:
-            epic_key = epic.get("key") or "-"
-            epic_fields_data = epic.get("fields") or {}
-            children = client.get_epic_children(epic_key, child_fields)
-            completion = calculate_completion(epic_fields_data, children)
-            due_date_value = calculate_due_date(epic_fields_data, children, due_field_id)
+    for i, project in enumerate(projects):
+        project_key = project.get("key") or ""
+        project_name = project.get("name") or project_key
+        progress_bar.progress((i + 1) / total_projects, text=f"Carregando {project_name}...")
+
+        for epic in client.get_project_epics(project_key, epic_fields):
+            fields = epic.get("fields") or {}
+            children = client.get_epic_children(epic.get("key") or "", child_fields)
+            completion = calculate_completion(fields, children)
+            due_date_value = calculate_due_date(fields, children, due_field_id)
             semaphore = calculate_semaphore(completion, due_date_value, client.config.warning_days)
+            rows.append({
+                "Espaço": project_name,
+                "Épico": epic.get("key") or "-",
+                "Título": fields.get("summary") or "-",
+                "Filhos": len(children),
+                "Responsável": pick_display_name(fields.get("assignee")),
+                "Status": get_status_name(fields),
+                "% Completude": completion,
+                "Prazo": format_date(due_date_value),
+                "Semáforo": SEMAPHORE_EMOJI.get(semaphore, "⚪") + " " + semaphore,
+                "_semaphore_raw": semaphore,
+            })
 
-            rows.append(
-                {
-                    "Espaço": project_name,
-                    "Épico": epic_key,
-                    "Título": epic_fields_data.get("summary") or "-",
-                    "Status": get_status_name(epic_fields_data),
-                    "Responsável": pick_display_name(epic_fields_data.get("assignee")),
-                    "Prazo": format_date(due_date_value),
-                    "% Completude": completion,
-                    "Semáforo": f'{SEMAPHORE_EMOJI.get(semaphore, "")} {semaphore.title()}'.strip(),
-                    "Itens": len(children),
-                    "_semaphore_raw": semaphore,
-                    "_prazo_raw": due_date_value or date.max,
-                }
-            )
-
-    columns = [
-        "Espaço",
-        "Épico",
-        "Título",
-        "Status",
-        "Responsável",
-        "Prazo",
-        "% Completude",
-        "Semáforo",
-        "Itens",
-        "_semaphore_raw",
-        "_prazo_raw",
-    ]
-    return pd.DataFrame(rows, columns=columns)
+    progress_bar.empty()
+    return pd.DataFrame(rows)
 
 
 def build_board_df(client: JiraClient, board_ids: list[str]) -> pd.DataFrame:
-    due_field_id = client.resolve_deadline_field()
-    issue_fields = unique_strings(["summary", "status", "assignee", due_field_id])
-    rows: list[dict[str, Any]] = []
+    rows = []
+    seen: set[tuple[str, str]] = set()
+    total = len(board_ids)
+    progress_bar = st.progress(0, text="Carregando board...")
 
-    for board_id in board_ids:
-        clean_board_id = board_id.strip()
-        if not clean_board_id:
-            continue
-
-        try:
-            board_name = (client.get_board(clean_board_id).get("name") or clean_board_id).strip()
-        except RuntimeError:
-            board_name = clean_board_id
-
-        issues = client.get_board_issues(clean_board_id, issue_fields)
-        for issue in issues:
+    for i, board_id in enumerate(board_ids):
+        progress_bar.progress((i + 1) / total, text=f"Carregando board {board_id}...")
+        for issue in client.get_board_issues(board_id, ["summary", "assignee", "status", "updated"]):
+            issue_key = issue.get("key") or "-"
+            if (board_id, issue_key) in seen:
+                continue
+            seen.add((board_id, issue_key))
             fields = issue.get("fields") or {}
-            due_date_value = extract_due_date(fields, due_field_id)
-            rows.append(
-                {
-                    "Board": board_name,
-                    "Issue": issue.get("key") or "-",
-                    "Resumo": fields.get("summary") or "-",
-                    "Status": get_status_name(fields),
-                    "Responsável": pick_display_name(fields.get("assignee")),
-                    "Prazo": format_date(due_date_value),
-                    "% Conclusão": completion_from_status(fields),
-                    "ServiceNow": extract_service_now_ref(fields.get("summary") or ""),
-                    "_prazo_raw": due_date_value or date.max,
-                }
-            )
+            summary = fields.get("summary") or "-"
+            rows.append({
+                "Board": board_id,
+                "Item": issue_key,
+                "Resumo": summary,
+                "Responsável": pick_display_name(fields.get("assignee")),
+                "Status": get_status_name(fields),
+                "% Conclusão": completion_from_status(fields),
+                "ServiceNow": extract_service_now_ref(summary),
+                "Última Atualização": format_datetime(fields.get("updated")),
+            })
 
-    columns = [
-        "Board",
-        "Issue",
-        "Resumo",
-        "Status",
-        "Responsável",
-        "Prazo",
-        "% Conclusão",
-        "ServiceNow",
-        "_prazo_raw",
-    ]
-    return pd.DataFrame(rows, columns=columns)
+    progress_bar.empty()
+    return pd.DataFrame(rows)
 
 
 # ─────────────────────────────────────────────
@@ -501,45 +468,6 @@ def render_board_table(df: pd.DataFrame) -> None:
     )
 
 
-def render_epic_table(df: pd.DataFrame) -> None:
-    if df.empty:
-        st.info("Nenhum épico encontrado para os filtros selecionados.")
-        return
-    semaphore_order = {"VERMELHO": 0, "AMARELO": 1, "SEM DATA": 2, "VERDE": 3}
-    display_df = df.copy()
-    display_df["_order"] = display_df["_semaphore_raw"].map(semaphore_order).fillna(99)
-    display_df = display_df.sort_values(["Espaço", "_order", "_prazo_raw", "Épico"]).drop(
-        columns=["_order", "_semaphore_raw", "_prazo_raw"],
-        errors="ignore",
-    )
-    st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "% Completude": st.column_config.ProgressColumn("% Completude", min_value=0, max_value=100, format="%d%%"),
-            "Título": st.column_config.TextColumn("Título", width="large"),
-            "Épico": st.column_config.TextColumn("Épico", width="small"),
-        }
-    )
-
-
-def render_board_table(df: pd.DataFrame) -> None:
-    if df.empty:
-        st.info("Nenhum item encontrado para os filtros selecionados.")
-        return
-    display_df = df.sort_values(["Board", "_prazo_raw", "Issue"]).drop(columns=["_prazo_raw"], errors="ignore")
-    st.dataframe(
-        display_df,
-        use_container_width=True,
-        hide_index=True,
-        column_config={
-            "% Conclusão": st.column_config.ProgressColumn("% Conclusão", min_value=0, max_value=100, format="%d%%"),
-            "Resumo": st.column_config.TextColumn("Resumo", width="large"),
-        }
-    )
-
-
 # ─────────────────────────────────────────────
 # App principal
 # ─────────────────────────────────────────────
@@ -575,15 +503,12 @@ def main() -> None:
         client = JiraClient(config)
 
         with st.spinner("Conectando ao Jira..."):
-            if config.scope_names:
-                try:
-                    projects = client.find_scope_projects()
-                    st.session_state["epic_df"] = build_epic_df(client, projects) if projects else pd.DataFrame()
-                except Exception as e:
-                    st.session_state["epic_df"] = pd.DataFrame()
-                    st.error(f"Erro ao carregar épicos: {e}")
-            else:
+            try:
+                projects = client.find_scope_projects()
+                st.session_state["epic_df"] = build_epic_df(client, projects) if projects else pd.DataFrame()
+            except Exception as e:
                 st.session_state["epic_df"] = pd.DataFrame()
+                st.error(f"Erro ao carregar épicos: {e}")
 
             if config.board_ids:
                 try:
@@ -600,7 +525,7 @@ def main() -> None:
     with tab_epic:
         epic_df: pd.DataFrame = st.session_state.get("epic_df", pd.DataFrame())
         if epic_df.empty:
-            st.info("Nenhum épico encontrado. Verifique os `scope_names` nos secrets.")
+            st.info("Nenhum épico encontrado nos projetos disponíveis.")
         else:
             metrics_row_epic(epic_df)
             st.markdown("---")
