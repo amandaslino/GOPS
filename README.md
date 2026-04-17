@@ -22,7 +22,6 @@ A solução também prevê a evolução para um **agente de IA personalizado**, 
 - 📈 Geração de dashboards interativos  
 - 📝 Criação automática de resumos executivos  
 - 🤖 Estrutura preparada para integração com agente de IA  
-- ⏱ Atualização programada (ex: diária via automação)  
 - 📊 Histórico de dados para análises comparativas  
 
 ---
@@ -52,7 +51,7 @@ Dashboard Interativo (Web)
 - (Futuro) Integração com IA  
 
 
-##👩‍💻 Autoria
+## 👩‍💻 Autoria
 
 Desenvolvido por Amanda Lino e Eduarda Blanco
 
