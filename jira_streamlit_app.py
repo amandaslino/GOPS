@@ -7,6 +7,8 @@ from datetime import date, datetime
 from typing import Any, Iterable
 
 import pandas as pd
+import plotly.express as px
+import plotly.graph_objects as go
 import requests
 import streamlit as st
 from requests.auth import HTTPBasicAuth
@@ -520,7 +522,109 @@ def main() -> None:
                 st.session_state["board_df"] = pd.DataFrame()
 
     # Abas
-    tab_epic, tab_board = st.tabs(["🗂️ Épicos por Projeto", "📌 Board de Issues"])
+    tab_dash, tab_epic, tab_board = st.tabs(["📊 Dashboard", "🗂️ Épicos por Projeto", "📌 Board de Issues"])
+
+    with tab_dash:
+        epic_df_d: pd.DataFrame = st.session_state.get("epic_df", pd.DataFrame())
+        board_df_d: pd.DataFrame = st.session_state.get("board_df", pd.DataFrame())
+
+        if epic_df_d.empty and board_df_d.empty:
+            st.info("Clique em Atualizar para carregar os dados.")
+        else:
+            st.markdown("### 📈 Visão Geral")
+
+            # ── Linha 1: métricas épicos ──────────────────
+            if not epic_df_d.empty:
+                st.markdown("#### Épicos")
+                col1, col2 = st.columns(2)
+
+                with col1:
+                    # Pizza semáforo
+                    sem_counts = epic_df_d["_semaphore_raw"].value_counts().reset_index()
+                    sem_counts.columns = ["Semáforo", "Quantidade"]
+                    color_map = {"VERDE": "#22c55e", "AMARELO": "#f59e0b", "VERMELHO": "#ef4444", "SEM DATA": "#94a3b8"}
+                    fig_sem = px.pie(
+                        sem_counts, values="Quantidade", names="Semáforo",
+                        title="Épicos por Semáforo",
+                        color="Semáforo", color_discrete_map=color_map,
+                        hole=0.4
+                    )
+                    fig_sem.update_layout(margin=dict(t=40, b=0, l=0, r=0), height=320)
+                    st.plotly_chart(fig_sem, use_container_width=True)
+
+                with col2:
+                    # Pizza status épicos
+                    status_counts = epic_df_d["Status"].value_counts().reset_index()
+                    status_counts.columns = ["Status", "Quantidade"]
+                    fig_status = px.pie(
+                        status_counts, values="Quantidade", names="Status",
+                        title="Épicos por Status",
+                        hole=0.4
+                    )
+                    fig_status.update_layout(margin=dict(t=40, b=0, l=0, r=0), height=320)
+                    st.plotly_chart(fig_status, use_container_width=True)
+
+                # Barras por responsável
+                resp_counts = epic_df_d.groupby(["Responsável", "_semaphore_raw"]).size().reset_index(name="Quantidade")
+                fig_resp = px.bar(
+                    resp_counts, x="Responsável", y="Quantidade",
+                    color="_semaphore_raw", title="Épicos por Responsável",
+                    color_discrete_map={"VERDE": "#22c55e", "AMARELO": "#f59e0b", "VERMELHO": "#ef4444", "SEM DATA": "#94a3b8"},
+                    labels={"_semaphore_raw": "Semáforo"},
+                    barmode="stack"
+                )
+                fig_resp.update_layout(xaxis_tickangle=-35, margin=dict(t=40, b=80), height=380)
+                st.plotly_chart(fig_resp, use_container_width=True)
+
+            st.markdown("---")
+
+            # ── Linha 2: board ────────────────────────────
+            if not board_df_d.empty:
+                st.markdown("#### Board de Issues")
+                col3, col4 = st.columns(2)
+
+                with col3:
+                    # Pizza status board
+                    status_b = board_df_d["Status"].value_counts().reset_index()
+                    status_b.columns = ["Status", "Quantidade"]
+                    fig_status_b = px.pie(
+                        status_b, values="Quantidade", names="Status",
+                        title="Issues por Status",
+                        hole=0.4
+                    )
+                    fig_status_b.update_layout(margin=dict(t=40, b=0, l=0, r=0), height=320)
+                    st.plotly_chart(fig_status_b, use_container_width=True)
+
+                with col4:
+                    # Barras top 10 responsáveis board
+                    top_resp_b = (
+                        board_df_d[board_df_d["Responsável"] != "Sem responsável"]
+                        .groupby("Responsável").size().reset_index(name="Quantidade")
+                        .sort_values("Quantidade", ascending=False).head(10)
+                    )
+                    fig_resp_b = px.bar(
+                        top_resp_b, x="Quantidade", y="Responsável",
+                        orientation="h", title="Top 10 Responsáveis (Board)",
+                        color="Quantidade", color_continuous_scale="Blues"
+                    )
+                    fig_resp_b.update_layout(margin=dict(t=40, b=0, l=0, r=10), height=320, yaxis=dict(autorange="reversed"))
+                    st.plotly_chart(fig_resp_b, use_container_width=True)
+
+                # Linha do tempo — itens por data de atualização
+                timeline_df = board_df_d.copy()
+                timeline_df["Data"] = pd.to_datetime(timeline_df["Última Atualização"], format="%d/%m/%Y", errors="coerce")
+                timeline_df = timeline_df.dropna(subset=["Data"])
+                if not timeline_df.empty:
+                    daily = timeline_df.groupby("Data").size().reset_index(name="Itens Atualizados")
+                    daily = daily.sort_values("Data")
+                    fig_time = px.line(
+                        daily, x="Data", y="Itens Atualizados",
+                        title="Itens Atualizados por Data",
+                        markers=True
+                    )
+                    fig_time.update_traces(line_color="#5219A1", marker_color="#FFAD01")
+                    fig_time.update_layout(margin=dict(t=40, b=0), height=320)
+                    st.plotly_chart(fig_time, use_container_width=True)
 
     with tab_epic:
         epic_df: pd.DataFrame = st.session_state.get("epic_df", pd.DataFrame())
