@@ -500,7 +500,7 @@ def check_password() -> bool:
     st.markdown('</div>', unsafe_allow_html=True)
 
     if btn:
-        expected = st.secrets.get("app_password", "")
+        expected = st.secrets.get("app_password") or st.secrets.get("jira", {}).get("app_password", "")
         if password == expected:
             st.session_state["authenticated"] = True
             st.rerun()
