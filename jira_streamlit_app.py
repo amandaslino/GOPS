@@ -132,9 +132,7 @@ class Config:
             st.error(f"Secret ausente na configuração do Streamlit: {e}. Verifique o arquivo secrets.toml.")
             st.stop()
 
-# ─────────────────────────────────────────────
-# JiraClient
-# ─────────────────────────────────────────────
+
 class JiraClient:
     def __init__(self, config: Config) -> None:
         self.config = config
